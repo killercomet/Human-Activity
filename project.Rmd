@@ -1,0 +1,184 @@
+---
+title: "Human Activity Recognition Project"
+author: "Guillermo Corominas"
+date: "Sunday, August 24, 2014"
+output: html_document
+---
+
+## Executive Summary
+
+In this work we are analyzing a large dataset of observations obtained by different movement sensors employed by some users doing different exercises. We are trying to classify this observations according to how well the exercise is performed. 
+
+The estimation we make about the final accuracy of the model is around 99.3%. This precision is estimated by training an intermediate model on 75% of the observations that will be used in the final model and testing it on a validation set of 20% of them. In our final model we add the observations left out of the training set to train a final model that should be more precise on the test set. 
+
+In the next sections we will detail the steps taken to train our model. 
+
+## Loading the dataset.
+
+We load our train and test sets. 
+
+```{r}
+library(caret)
+library(randomForest)
+
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+
+#summary(train)
+
+dim(train)
+dim(test)
+```
+
+## Filtering the input variables. 
+
+
+### Filter predictors with mostly NAs
+
+We will filter the predictors that have too few observations to be relevant to the final prediction. In our case we have set the threshold to be 10%. If a 90% of the data for some predictor is missing, we will remove it from our final model.
+
+
+```{r cache=TRUE}
+
+nadfTrain <- apply(train, 2, is.na)
+nadfTest  <- apply(test, 2, is.na)
+
+#Look for variables that are mostly nas. 
+sumcolsTrain <- apply(nadfTrain, 2, sum)
+sumcolsTrain
+
+sumcolsTest <- apply(nadfTest, 2, sum)
+sumcolsTest
+
+
+notMoreThan90NasTrain <- which(sumcolsTrain < dim(train)[1] * 0.90) 
+notMoreThan90NasTest <- which(sumcolsTest < dim(test)[1] * 0.90) 
+
+#names(notMoreThan90NasTrain)
+#names(notMoreThan90NasTest)
+
+#Eliminate the useless predictors. 
+train <- train[,notMoreThan90NasTrain]
+test <- test[,notMoreThan90NasTrain]
+
+dim(train)
+dim(test)
+```
+
+### Remove predictors that we deemed to be not related to the outcome
+
+We will remove some predictors that we think are not related to the outcome just by taking into account their meaning and values such as the name of the subject or the timestamp. 
+
+```{r cache=TRUE}
+removeList <- c('X', 'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2', 'cvtd_timestamp')
+newNames <- names(train)[!names(train) %in% removeList]
+
+train <- train[,newNames]
+dim(train)
+
+#Preserve all but classe (not on the test set)
+test <- test[,newNames[-length(newNames)]]
+dim(test)
+```
+
+
+### Remove aggregate observations
+
+If we take a look at the dataset we can see there are some observations marked as "new_window=yes". Those are aggregates of the previous observations marked as "new_window==yes". As we are trying to get predictions only for those marked as "no", we will discard those aggregate observations. 
+
+```{r cache=TRUE}
+#Remove aggregate observations. 
+train <- train[train$new_window=='no',]
+dim(train)
+```
+
+### Remove predictors with mostly blanks
+
+There are some predictors left for which instead of NAs, blanks are registered. Those are only useful for the aggregate observations, so we will discard them as well. 
+
+```{r cache=TRUE}
+#If a variable has blanks or is not numeric an aggregate like sd will output nas
+listSD <- apply(train, 2, sd)
+removeList <- names(which(is.na(listSD)))
+length(removeList)
+
+#Preserve classe
+removeList <- removeList[-length(removeList)]
+
+newNames <- names(train)[!names(train) %in% removeList]
+train <- train[,newNames]
+dim(train)
+
+test <- test[,newNames[-length(newNames)]]
+dim(test)
+``` 
+
+## Explore further reduction of the variables:
+
+We have explored further reductions of the variables but we have concluded that those reductions would impact in our final precision, so we discarded them. We include them here just as a testimony. 
+
+
+### Explore filtering variables with too low variance (discarded in the final model)
+
+We will test whether some of our variables have too low variance and thus a reduced predicting power.
+
+```{r cache=TRUE}
+trn <-  train
+
+#Standarize the variables
+preObj <- preProcess(trn[,-54], method=c("center", "scale"))
+trns <- predict(preObj, trn[,-54])
+
+nsv <- nearZeroVar(trns, saveMetrics=TRUE)
+nsv
+```
+
+As we see in the final table, there are no variables worth discarding. 
+
+## Creating a partial model. 
+
+We will train a partial model to evaluate the performance. 
+
+### Create a train set and a validation set out of our train set. 
+
+We will first train a model on a portion of our dataset and test it on a validation set. This way we can get a pessimistic estimate the final precision of our model.
+
+```{r cache=TRUE}
+inTrain <- createDataPartition(y=train$classe, p=.75, list=FALSE)
+
+trn <- train[inTrain,]
+val <- train[-inTrain,] 
+```
+
+### Train a Random Forest model on the reduced train set. 
+
+We have chosen to train a random forest model because it is a top performance model that can adapt to multi-class classification very easily. It also performs cross validation internally so it would be very convenient.
+
+```{r cache=TRUE}
+partialModel <- randomForest(classe~., data=trn, importance=TRUE, proximity=TRUE)
+```
+
+### Test the accuracy of the partial model.
+
+We will get some metrics of the performance of our partial model. 
+
+```{r cache=TRUE}
+prediction <- predict(model, newdata=val)
+confusionMatrix(val$classe, prediction)
+```
+
+As we see our perfomance on the validation set is of 99.3%. This should be a pessimistic estimation due to the model being trained only on 75% of the observations. 
+
+## Creating the final model. 
+
+Just train on all of the observations that we had after filtering. 
+
+```{r cache=TRUE}
+finalModel <- randomForest(classe~., data=train, importance=TRUE, proximity=TRUE)
+```
+
+
+
+
+
+
